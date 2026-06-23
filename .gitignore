@@ -1,0 +1,27 @@
+# General macOS system files
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Icon files 
+Icon_
+
+# Thumbnails and resource forks
+._*
+
+# Files that may appear in the root of a volume
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+
+# Directories used by Apple applications
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.TheVolumeSettingsFolder
+
