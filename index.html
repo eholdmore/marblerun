@@ -2,74 +2,90 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Desert Marble Run</title>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
 
         * { box-sizing: border-box; margin: 0; padding: 0; }
 
+        html, body {
+            height: 100%;
+            overflow: hidden;
+        }
+
         body {
             background: #1a1208;
-            background-image:
-                radial-gradient(ellipse at 50% 0%, #2e1f0a 0%, #1a1208 70%);
             display: flex;
             flex-direction: column;
             align-items: center;
-            min-height: 100vh;
-            padding: 24px 16px 32px;
+            height: 100dvh;
+            padding: 10px 8px 8px;
             font-family: 'Press Start 2P', 'Courier New', monospace;
+            touch-action: none;
         }
 
         h1 {
             color: #f0c060;
-            font-size: 13px;
+            font-size: clamp(8px, 2.5vw, 13px);
             letter-spacing: 2px;
             text-transform: uppercase;
-            margin-bottom: 4px;
+            margin-bottom: 2px;
             text-shadow: 2px 2px #7a3a00;
+            white-space: nowrap;
         }
 
         .subtitle {
             color: #a07840;
-            font-size: 7px;
+            font-size: clamp(5px, 1.5vw, 7px);
             letter-spacing: 1px;
-            margin-bottom: 16px;
+            margin-bottom: 8px;
+            white-space: nowrap;
         }
 
         .controls {
             display: flex;
-            gap: 10px;
-            margin-bottom: 12px;
+            gap: 8px;
+            margin-bottom: 8px;
             align-items: center;
+            flex-shrink: 0;
         }
 
         button {
             background: #7a3a00;
             color: #f0c060;
             border: 3px solid #f0c060;
-            padding: 8px 14px;
+            padding: clamp(6px, 1.5vw, 10px) clamp(8px, 2vw, 14px);
             cursor: pointer;
             font-family: 'Press Start 2P', monospace;
-            font-size: 7px;
+            font-size: clamp(6px, 1.5vw, 8px);
             text-transform: uppercase;
             letter-spacing: 1px;
-            image-rendering: pixelated;
             transition: background 0.1s, color 0.1s;
+            /* Large enough touch target */
+            min-height: 44px;
+            min-width: 44px;
+            -webkit-tap-highlight-color: transparent;
         }
 
-        button:hover {
-            background: #f0c060;
-            color: #3a1800;
-        }
-
-        button:active {
-            transform: scale(0.96);
-        }
+        button:hover { background: #f0c060; color: #3a1800; }
+        button:active { transform: scale(0.96); background: #f0c060; color: #3a1800; }
 
         .marble-count {
             color: #a07840;
-            font-size: 7px;
+            font-size: clamp(5px, 1.5vw, 7px);
             letter-spacing: 1px;
+            white-space: nowrap;
+        }
+
+        .canvas-wrap {
+            position: relative;
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 100%;
+            min-height: 0;
         }
 
         canvas {
@@ -77,373 +93,284 @@
             border: 4px solid #7a3a00;
             box-shadow:
                 0 0 0 1px #f0c06044,
-                4px 4px 0 #000,
-                8px 8px 0 #00000033;
+                4px 4px 0 #000;
             display: block;
             cursor: crosshair;
+            touch-action: none;
+            /* JS will set width/height style to scale to fit */
         }
 
         .hint {
             color: #6a5030;
-            font-size: 6px;
-            margin-top: 10px;
+            font-size: clamp(4px, 1.2vw, 6px);
+            margin-top: 6px;
             letter-spacing: 1px;
+            text-align: center;
+            flex-shrink: 0;
         }
     </style>
 </head>
 <body>
 
 <h1>Desert Marble Run</h1>
-<p class="subtitle">★ click the sand to drop a marble ★</p>
+<p class="subtitle">★ tap the sand to drop a marble ★</p>
 
 <div class="controls">
-    <button id="dropOne">Drop Marble</button>
-    <button id="clear">Smooth Sand</button>
+    <button id="dropOne">Drop</button>
+    <button id="clear">Clear</button>
     <span class="marble-count" id="countDisplay">0 marbles</span>
 </div>
 
-<canvas id="sim" width="600" height="700"></canvas>
+<div class="canvas-wrap" id="canvasWrap">
+    <canvas id="sim" width="600" height="700"></canvas>
+</div>
 <p class="hint">marbles carve grooves — drop more to follow the same path</p>
 
 <script>
 const canvas = document.getElementById('sim');
 const ctx = canvas.getContext('2d');
-const w = 600, h = 700;
+const W = 600, H = 700; // internal resolution, never changes
 
 const trailCanvas = document.createElement('canvas');
-trailCanvas.width = w; trailCanvas.height = h;
+trailCanvas.width = W; trailCanvas.height = H;
 const tCtx = trailCanvas.getContext('2d');
 
-let sand = new Float32Array(w * h);
+let sand = new Float32Array(W * H);
 let marbles = [];
 let totalDropped = 0;
 
+/* ─── Responsive sizing ─── */
+function fitCanvas() {
+    const wrap = document.getElementById('canvasWrap');
+    const maxW = wrap.clientWidth  - 8;
+    const maxH = wrap.clientHeight - 8;
+    const scale = Math.min(maxW / W, maxH / H, 1); // never upscale past 1:1 on desktop
+    canvas.style.width  = Math.floor(W * scale) + 'px';
+    canvas.style.height = Math.floor(H * scale) + 'px';
+}
+fitCanvas();
+window.addEventListener('resize', fitCanvas);
+
+/* ─── Coordinate translation (canvas display vs internal) ─── */
+function toCanvasX(clientX) {
+    const rect = canvas.getBoundingClientRect();
+    return (clientX - rect.left) * (W / rect.width);
+}
+function toCanvasY(clientY) {
+    const rect = canvas.getBoundingClientRect();
+    return (clientY - rect.top) * (H / rect.height);
+}
+
+/* ─── Marble management ─── */
 function updateCount() {
-    document.getElementById('countDisplay').textContent = totalDropped + (totalDropped === 1 ? ' marble' : ' marbles');
+    document.getElementById('countDisplay').textContent =
+        totalDropped + (totalDropped === 1 ? ' marble' : ' marbles');
 }
 
 function addMarble(x) {
-    marbles.push({ x: Math.max(10, Math.min(w - 10, x)), y: 0, vx: 0, vy: 2 });
+    marbles.push({ x: Math.max(10, Math.min(W - 10, x)), y: 0, vx: 0, vy: 2 });
     totalDropped++;
     updateCount();
 }
 
-document.getElementById('dropOne').onclick = () => addMarble(w / 2);
-document.getElementById('clear').onclick = () => {
+document.getElementById('dropOne').addEventListener('click', () => addMarble(W / 2));
+document.getElementById('clear').addEventListener('click', () => {
     sand.fill(0);
-    tCtx.clearRect(0, 0, w, h);
+    tCtx.clearRect(0, 0, W, H);
     marbles = [];
     totalDropped = 0;
     updateCount();
-};
-canvas.onclick = (e) => {
-    const rect = canvas.getBoundingClientRect();
-    const scaleX = w / rect.width;
-    addMarble((e.clientX - rect.left) * scaleX);
-};
+});
 
-/* ─── Pixel art drawing helpers ─── */
-function px(ctx, x, y, color, size = 1) {
-    ctx.fillStyle = color;
-    ctx.fillRect(Math.round(x), Math.round(y), size, size);
-}
+/* ─── Pointer / touch input (unified) ─── */
+canvas.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    addMarble(toCanvasX(e.clientX));
+});
+// Also allow dragging to spray marbles
+canvas.addEventListener('pointermove', (e) => {
+    if (e.buttons === 0) return;
+    e.preventDefault();
+    addMarble(toCanvasX(e.clientX));
+});
 
-function pxRect(ctx, x, y, rw, rh, color) {
-    ctx.fillStyle = color;
-    ctx.fillRect(Math.round(x), Math.round(y), rw, rh);
+/* ─── Pixel art helpers ─── */
+function pxRect(context, x, y, rw, rh, color) {
+    context.fillStyle = color;
+    context.fillRect(Math.round(x), Math.round(y), rw, rh);
 }
 
 /* ─── Saguaro Cactus ─── */
 function drawCactus(cx, cy) {
-    const G = {
-        dark:  '#1a5c1a',
-        mid:   '#2d7a2d',
-        light: '#3d9e3d',
-        shine: '#5ab85a',
-        spine: '#e8dcc0',
-    };
-
-    /* main trunk */
-    pxRect(ctx, cx - 7, cy - 80, 14, 80, G.mid);
-    pxRect(ctx, cx - 6, cy - 80, 2, 80, G.light);
-    pxRect(ctx, cx + 4, cy - 80, 2, 80, G.dark);
-
-    /* trunk top rounded */
-    pxRect(ctx, cx - 5, cy - 85, 10, 5, G.mid);
-    pxRect(ctx, cx - 4, cy - 86, 8, 2, G.mid);
-    pxRect(ctx, cx - 3, cy - 87, 6, 1, G.mid);
-
-    /* left arm: goes up then out */
-    pxRect(ctx, cx - 20, cy - 60, 14, 10, G.mid); /* horizontal */
-    pxRect(ctx, cx - 20, cy - 60, 2, 10, G.light);
-    pxRect(ctx, cx - 20, cy - 75, 10, 15, G.mid); /* vertical up */
-    pxRect(ctx, cx - 19, cy - 75, 2, 15, G.light);
-    pxRect(ctx, cx - 13, cy - 75, 2, 15, G.dark);
-    pxRect(ctx, cx - 19, cy - 78, 8, 3, G.mid); /* arm top */
-    pxRect(ctx, cx - 18, cy - 79, 6, 1, G.mid);
-
-    /* right arm */
-    pxRect(ctx, cx + 6,  cy - 50, 14, 10, G.mid);
-    pxRect(ctx, cx + 18, cy - 50, 2, 10, G.light);
-    pxRect(ctx, cx + 8,  cy - 68, 10, 18, G.mid);
-    pxRect(ctx, cx + 9,  cy - 68, 2, 18, G.light);
-    pxRect(ctx, cx + 15, cy - 68, 2, 18, G.dark);
-    pxRect(ctx, cx + 9,  cy - 71, 8, 3, G.mid);
-    pxRect(ctx, cx + 10, cy - 72, 6, 1, G.mid);
-
-    /* spines — tiny pixel lines */
+    const G = { dark:'#1a5c1a', mid:'#2d7a2d', light:'#3d9e3d', spine:'#e8dcc0' };
+    pxRect(ctx, cx-7, cy-80, 14, 80, G.mid);
+    pxRect(ctx, cx-6, cy-80, 2, 80, G.light);
+    pxRect(ctx, cx+4, cy-80, 2, 80, G.dark);
+    pxRect(ctx, cx-5, cy-85, 10, 5, G.mid);
+    pxRect(ctx, cx-4, cy-86, 8, 2, G.mid);
+    pxRect(ctx, cx-3, cy-87, 6, 1, G.mid);
+    pxRect(ctx, cx-20, cy-60, 14, 10, G.mid);
+    pxRect(ctx, cx-20, cy-60, 2, 10, G.light);
+    pxRect(ctx, cx-20, cy-75, 10, 15, G.mid);
+    pxRect(ctx, cx-19, cy-75, 2, 15, G.light);
+    pxRect(ctx, cx-13, cy-75, 2, 15, G.dark);
+    pxRect(ctx, cx-19, cy-78, 8, 3, G.mid);
+    pxRect(ctx, cx-18, cy-79, 6, 1, G.mid);
+    pxRect(ctx, cx+6,  cy-50, 14, 10, G.mid);
+    pxRect(ctx, cx+18, cy-50, 2, 10, G.light);
+    pxRect(ctx, cx+8,  cy-68, 10, 18, G.mid);
+    pxRect(ctx, cx+9,  cy-68, 2, 18, G.light);
+    pxRect(ctx, cx+15, cy-68, 2, 18, G.dark);
+    pxRect(ctx, cx+9,  cy-71, 8, 3, G.mid);
+    pxRect(ctx, cx+10, cy-72, 6, 1, G.mid);
     const spines = [
-        [cx - 7, cy - 70], [cx - 7, cy - 55], [cx - 7, cy - 40], [cx - 7, cy - 25],
-        [cx + 7, cy - 65], [cx + 7, cy - 50], [cx + 7, cy - 35], [cx + 7, cy - 20],
-        [cx - 20, cy - 68],[cx - 20, cy - 58],
-        [cx + 20, cy - 58],[cx + 20, cy - 48],
+        [cx-7,cy-70],[cx-7,cy-55],[cx-7,cy-40],[cx-7,cy-25],
+        [cx+7,cy-65],[cx+7,cy-50],[cx+7,cy-35],[cx+7,cy-20],
+        [cx-20,cy-68],[cx-20,cy-58],[cx+20,cy-58],[cx+20,cy-48],
     ];
-    spines.forEach(([sx, sy]) => {
-        pxRect(ctx, sx - 4, sy, 4, 1, G.spine);
-        pxRect(ctx, sx + 7, sy, 4, 1, G.spine);
+    spines.forEach(([sx,sy]) => {
+        pxRect(ctx, sx-4, sy, 4, 1, G.spine);
+        pxRect(ctx, sx+7, sy, 4, 1, G.spine);
     });
-
-    /* flower bud on top */
-    pxRect(ctx, cx - 3, cy - 90, 6, 4, '#e85c8a');
-    pxRect(ctx, cx - 2, cy - 92, 4, 2, '#f07090');
-    pxRect(ctx, cx - 1, cy - 88, 2, 2, '#ffe060');
+    pxRect(ctx, cx-3, cy-90, 6, 4, '#e85c8a');
+    pxRect(ctx, cx-2, cy-92, 4, 2, '#f07090');
+    pxRect(ctx, cx-1, cy-88, 2, 2, '#ffe060');
 }
 
 /* ─── Cow Skull ─── */
 function drawSkull(cx, cy) {
-    const C = {
-        bone:   '#e8dcc0',
-        shadow: '#c8bc98',
-        dark:   '#a89878',
-        hole:   '#2c2010',
-        horn:   '#d4a840',
-        hornD:  '#a07820',
-    };
-
-    /* left horn */
-    pxRect(ctx, cx - 28, cy - 20, 6, 4, C.hornD);
-    pxRect(ctx, cx - 32, cy - 28, 6, 8, C.hornD);
-    pxRect(ctx, cx - 34, cy - 34, 5, 6, C.horn);
-    pxRect(ctx, cx - 33, cy - 38, 4, 4, C.horn);
-    pxRect(ctx, cx - 32, cy - 40, 3, 2, C.horn);
-
-    /* right horn */
-    pxRect(ctx, cx + 22, cy - 20, 6, 4, C.hornD);
-    pxRect(ctx, cx + 26, cy - 28, 6, 8, C.hornD);
-    pxRect(ctx, cx + 29, cy - 34, 5, 6, C.horn);
-    pxRect(ctx, cx + 29, cy - 38, 4, 4, C.horn);
-    pxRect(ctx, cx + 29, cy - 40, 3, 2, C.horn);
-
-    /* skull dome */
-    pxRect(ctx, cx - 18, cy - 22, 36, 24, C.bone);
-    pxRect(ctx, cx - 14, cy - 28, 28, 6, C.bone);
-    pxRect(ctx, cx - 10, cy - 32, 20, 4, C.bone);
-    pxRect(ctx, cx - 6,  cy - 34, 12, 2, C.bone);
-
-    /* shadow on skull */
-    pxRect(ctx, cx + 10, cy - 22, 6, 24, C.shadow);
-    pxRect(ctx, cx + 8,  cy - 28, 4, 6, C.shadow);
-
-    /* cheekbones */
-    pxRect(ctx, cx - 20, cy - 4, 8, 8, C.bone);
-    pxRect(ctx, cx + 12, cy - 4, 8, 8, C.bone);
-
-    /* nasal cavity */
-    pxRect(ctx, cx - 6, cy - 12, 12, 10, C.dark);
-    pxRect(ctx, cx - 4, cy - 14, 4, 2, C.dark);
-    pxRect(ctx, cx,     cy - 14, 4, 2, C.dark);
-    pxRect(ctx, cx - 5, cy - 10, 4, 6, C.hole);
-    pxRect(ctx, cx + 1, cy - 10, 4, 6, C.hole);
-
-    /* eye sockets */
-    pxRect(ctx, cx - 14, cy - 22, 10, 10, C.dark);
-    pxRect(ctx, cx - 12, cy - 24, 6, 12, C.hole);
-    pxRect(ctx, cx - 14, cy - 22, 2, 10, C.shadow);
-
-    pxRect(ctx, cx + 4,  cy - 22, 10, 10, C.dark);
-    pxRect(ctx, cx + 6,  cy - 24, 6, 12, C.hole);
-
-    /* jaw teeth */
-    pxRect(ctx, cx - 14, cy + 2, 28, 6, C.bone);
-    for (let i = 0; i < 5; i++) {
-        pxRect(ctx, cx - 10 + i * 5, cy + 8, 4, 5, C.bone);
-    }
-    /* jaw line cracks */
-    pxRect(ctx, cx - 2, cy - 8, 1, 6, C.dark);
-    pxRect(ctx, cx + 2, cy - 6, 1, 4, C.dark);
+    const C = { bone:'#e8dcc0', shadow:'#c8bc98', dark:'#a89878', hole:'#2c2010', horn:'#d4a840', hornD:'#a07820' };
+    pxRect(ctx, cx-28, cy-20, 6, 4, C.hornD);
+    pxRect(ctx, cx-32, cy-28, 6, 8, C.hornD);
+    pxRect(ctx, cx-34, cy-34, 5, 6, C.horn);
+    pxRect(ctx, cx-33, cy-38, 4, 4, C.horn);
+    pxRect(ctx, cx-32, cy-40, 3, 2, C.horn);
+    pxRect(ctx, cx+22, cy-20, 6, 4, C.hornD);
+    pxRect(ctx, cx+26, cy-28, 6, 8, C.hornD);
+    pxRect(ctx, cx+29, cy-34, 5, 6, C.horn);
+    pxRect(ctx, cx+29, cy-38, 4, 4, C.horn);
+    pxRect(ctx, cx+29, cy-40, 3, 2, C.horn);
+    pxRect(ctx, cx-18, cy-22, 36, 24, C.bone);
+    pxRect(ctx, cx-14, cy-28, 28, 6, C.bone);
+    pxRect(ctx, cx-10, cy-32, 20, 4, C.bone);
+    pxRect(ctx, cx-6,  cy-34, 12, 2, C.bone);
+    pxRect(ctx, cx+10, cy-22, 6, 24, C.shadow);
+    pxRect(ctx, cx+8,  cy-28, 4, 6, C.shadow);
+    pxRect(ctx, cx-20, cy-4, 8, 8, C.bone);
+    pxRect(ctx, cx+12, cy-4, 8, 8, C.bone);
+    pxRect(ctx, cx-6, cy-12, 12, 10, C.dark);
+    pxRect(ctx, cx-4, cy-14, 4, 2, C.dark);
+    pxRect(ctx, cx,   cy-14, 4, 2, C.dark);
+    pxRect(ctx, cx-5, cy-10, 4, 6, C.hole);
+    pxRect(ctx, cx+1, cy-10, 4, 6, C.hole);
+    pxRect(ctx, cx-14, cy-22, 10, 10, C.dark);
+    pxRect(ctx, cx-12, cy-24, 6, 12, C.hole);
+    pxRect(ctx, cx-14, cy-22, 2, 10, C.shadow);
+    pxRect(ctx, cx+4,  cy-22, 10, 10, C.dark);
+    pxRect(ctx, cx+6,  cy-24, 6, 12, C.hole);
+    pxRect(ctx, cx-14, cy+2, 28, 6, C.bone);
+    for (let i = 0; i < 5; i++) pxRect(ctx, cx-10+i*5, cy+8, 4, 5, C.bone);
+    pxRect(ctx, cx-2, cy-8, 1, 6, C.dark);
+    pxRect(ctx, cx+2, cy-6, 1, 4, C.dark);
 }
 
 /* ─── Rattlesnake ─── */
 function drawSnake(cx, cy) {
-    const S = {
-        base:    '#8B6914',
-        pattern: '#5a3d00',
-        belly:   '#d4a84a',
-        bellyL:  '#e8c87a',
-        eye:     '#111',
-        eyeS:    '#ff0',
-        tongue:  '#cc2222',
-        rattle:  '#c0a050',
-        rattleD: '#907030',
-    };
-
-    /* coiled body — drawn as layered rectangles */
-    /* bottom coil */
-    pxRect(ctx, cx - 24, cy + 4,  48, 8, S.base);
-    pxRect(ctx, cx - 22, cy + 5,  44, 4, S.belly);
-    /* diamond pattern on bottom coil */
-    for (let i = 0; i < 5; i++) {
-        pxRect(ctx, cx - 20 + i * 10, cy + 4, 6, 2, S.pattern);
-        pxRect(ctx, cx - 17 + i * 10, cy + 10, 6, 2, S.pattern);
-    }
-
-    /* middle coil */
-    pxRect(ctx, cx - 20, cy - 4,  40, 8, S.base);
-    pxRect(ctx, cx - 18, cy - 3,  36, 4, S.belly);
-    for (let i = 0; i < 4; i++) {
-        pxRect(ctx, cx - 16 + i * 10, cy - 4, 6, 2, S.pattern);
-        pxRect(ctx, cx - 13 + i * 10, cy + 2, 6, 2, S.pattern);
-    }
-
-    /* top coil / neck rising */
-    pxRect(ctx, cx - 16, cy - 12, 32, 8, S.base);
-    pxRect(ctx, cx - 14, cy - 11, 28, 4, S.belly);
-
-    /* neck going up-right */
-    pxRect(ctx, cx + 6, cy - 22, 10, 10, S.base);
-    pxRect(ctx, cx + 7, cy - 21, 6,  6,  S.belly);
-
-    /* head */
-    pxRect(ctx, cx + 8, cy - 34, 16, 12, S.base);
-    pxRect(ctx, cx + 10, cy - 32, 12, 6, S.belly);
-    /* head wider at back */
-    pxRect(ctx, cx + 6, cy - 30, 4, 8, S.base);
-    /* snout */
-    pxRect(ctx, cx + 22, cy - 30, 4, 6, S.base);
-    pxRect(ctx, cx + 24, cy - 32, 2, 2, S.pattern);
-
-    /* eye */
-    pxRect(ctx, cx + 18, cy - 32, 4, 4, S.eyeS);
-    pxRect(ctx, cx + 19, cy - 31, 2, 2, S.eye);
-
-    /* forked tongue */
-    pxRect(ctx, cx + 26, cy - 28, 6, 1, S.tongue);
-    pxRect(ctx, cx + 30, cy - 30, 2, 2, S.tongue);
-    pxRect(ctx, cx + 30, cy - 27, 2, 2, S.tongue);
-
-    /* rattle tail */
-    pxRect(ctx, cx - 24, cy + 8,  4, 6, S.rattle);
-    pxRect(ctx, cx - 27, cy + 10, 4, 6, S.rattle);
-    pxRect(ctx, cx - 30, cy + 12, 4, 5, S.rattleD);
-    pxRect(ctx, cx - 27, cy + 10, 2, 2, S.rattleD);
-    pxRect(ctx, cx - 24, cy + 8,  2, 2, S.rattleD);
-
-    /* scale shimmer lines */
-    pxRect(ctx, cx - 10, cy - 2, 20, 1, S.bellyL);
-    pxRect(ctx, cx - 12, cy + 6, 24, 1, S.bellyL);
+    const S = { base:'#8B6914', pattern:'#5a3d00', belly:'#d4a84a', bellyL:'#e8c87a', eye:'#111', eyeS:'#ff0', tongue:'#cc2222', rattle:'#c0a050', rattleD:'#907030' };
+    pxRect(ctx, cx-24, cy+4,  48, 8, S.base);
+    pxRect(ctx, cx-22, cy+5,  44, 4, S.belly);
+    for (let i=0;i<5;i++) { pxRect(ctx,cx-20+i*10,cy+4,6,2,S.pattern); pxRect(ctx,cx-17+i*10,cy+10,6,2,S.pattern); }
+    pxRect(ctx, cx-20, cy-4,  40, 8, S.base);
+    pxRect(ctx, cx-18, cy-3,  36, 4, S.belly);
+    for (let i=0;i<4;i++) { pxRect(ctx,cx-16+i*10,cy-4,6,2,S.pattern); pxRect(ctx,cx-13+i*10,cy+2,6,2,S.pattern); }
+    pxRect(ctx, cx-16, cy-12, 32, 8, S.base);
+    pxRect(ctx, cx-14, cy-11, 28, 4, S.belly);
+    pxRect(ctx, cx+6,  cy-22, 10, 10, S.base);
+    pxRect(ctx, cx+7,  cy-21, 6, 6, S.belly);
+    pxRect(ctx, cx+8,  cy-34, 16, 12, S.base);
+    pxRect(ctx, cx+10, cy-32, 12, 6, S.belly);
+    pxRect(ctx, cx+6,  cy-30, 4, 8, S.base);
+    pxRect(ctx, cx+22, cy-30, 4, 6, S.base);
+    pxRect(ctx, cx+24, cy-32, 2, 2, S.pattern);
+    pxRect(ctx, cx+18, cy-32, 4, 4, S.eyeS);
+    pxRect(ctx, cx+19, cy-31, 2, 2, S.eye);
+    pxRect(ctx, cx+26, cy-28, 6, 1, S.tongue);
+    pxRect(ctx, cx+30, cy-30, 2, 2, S.tongue);
+    pxRect(ctx, cx+30, cy-27, 2, 2, S.tongue);
+    pxRect(ctx, cx-24, cy+8,  4, 6, S.rattle);
+    pxRect(ctx, cx-27, cy+10, 4, 6, S.rattle);
+    pxRect(ctx, cx-30, cy+12, 4, 5, S.rattleD);
+    pxRect(ctx, cx-27, cy+10, 2, 2, S.rattleD);
+    pxRect(ctx, cx-24, cy+8,  2, 2, S.rattleD);
+    pxRect(ctx, cx-10, cy-2, 20, 1, S.bellyL);
+    pxRect(ctx, cx-12, cy+6, 24, 1, S.bellyL);
 }
 
-/* ─── Ground / horizon line ─── */
+/* ─── Ground / horizon ─── */
 function drawGround() {
-    /* sky gradient band near top */
     ctx.fillStyle = '#8fb8d4';
-    ctx.fillRect(0, 0, w, 60);
+    ctx.fillRect(0, 0, W, 60);
     ctx.fillStyle = '#c8a86a';
-    ctx.fillRect(0, 60, w, 20);
-
-    /* sun */
+    ctx.fillRect(0, 60, W, 20);
     ctx.fillStyle = '#ffffa0';
     ctx.fillRect(520, 8, 40, 40);
     ctx.fillStyle = '#fff080';
     ctx.fillRect(516, 12, 48, 32);
     ctx.fillStyle = '#ffe040';
     ctx.fillRect(524, 10, 32, 36);
-
-    /* sand ground */
     ctx.fillStyle = '#d4a84a';
-    ctx.fillRect(0, 80, w, h - 80);
-
-    /* sand texture rows */
+    ctx.fillRect(0, 80, W, H - 80);
     const texColors = ['#c89838', '#e0bc60', '#c49030'];
-    for (let row = 90; row < h; row += 12) {
+    for (let row = 90; row < H; row += 12) {
         ctx.fillStyle = texColors[(row / 12 | 0) % 3];
-        for (let col = (row % 24); col < w; col += 32) {
-            ctx.fillRect(col, row, 16, 2);
-        }
+        for (let col = (row % 24); col < W; col += 32) ctx.fillRect(col, row, 16, 2);
     }
-
-    /* distant mesa silhouettes */
     ctx.fillStyle = '#b87040';
     ctx.fillRect(0,   50, 80, 30);
     ctx.fillRect(0,   40, 50, 10);
     ctx.fillRect(480, 55, 120, 25);
     ctx.fillRect(520, 45, 80, 10);
-
-    /* ground shadow under props area */
     ctx.fillStyle = 'rgba(0,0,0,0.08)';
     ctx.fillRect(60, 480, 100, 6);
     ctx.fillRect(440, 300, 100, 6);
 }
 
-/* ─── Main draw ─── */
-function drawProps() {
-    drawCactus(520, 420);
-    drawSkull(100, 570);
-    drawSnake(460, 330);
-}
-
-/* ─── Marble physics ─── */
+/* ─── Physics loop ─── */
 function loop() {
     marbles.forEach(m => {
         m.vx += (Math.random() - 0.5) * 0.15;
-
-        let idx = Math.floor(m.y) * w + Math.floor(m.x);
-        let sampleDist = 20;
-        let left  = sand[Math.max(0, idx - sampleDist)] || 0;
-        let right = sand[Math.min(w * h - 1, idx + sampleDist)] || 0;
+        let idx = Math.floor(m.y) * W + Math.floor(m.x);
+        let left  = sand[Math.max(0, idx - 20)] || 0;
+        let right = sand[Math.min(W * H - 1, idx + 20)] || 0;
         m.vx += (right - left) * 0.08;
         m.vx *= 0.92;
-
         m.x += m.vx;
         m.y += m.vy;
-
         if (m.x < 5)   { m.x = 5;   m.vx = 0; }
-        if (m.x > w-5) { m.x = w-5; m.vx = 0; }
-
+        if (m.x > W-5) { m.x = W-5; m.vx = 0; }
         tCtx.fillStyle = 'rgba(80, 45, 10, 0.06)';
         tCtx.fillRect(m.x - 1, m.y, 5, 5);
-
-        const si = Math.min(w * h - 1, Math.floor(m.y) * w + Math.floor(m.x));
+        const si = Math.min(W * H - 1, Math.floor(m.y) * W + Math.floor(m.x));
         sand[si] += 2;
     });
+    marbles = marbles.filter(m => m.y < H);
 
-    marbles = marbles.filter(m => m.y < h);
-
-    /* draw scene */
-    ctx.clearRect(0, 0, w, h);
+    ctx.clearRect(0, 0, W, H);
     drawGround();
-    drawProps();
-
-    /* trail overlay */
+    drawCactus(520, 420);
+    drawSkull(100, 570);
+    drawSnake(460, 330);
     ctx.drawImage(trailCanvas, 0, 0);
 
-    /* marbles */
     marbles.forEach(m => {
-        /* shadow */
         ctx.fillStyle = 'rgba(0,0,0,0.2)';
-        ctx.beginPath();
-        ctx.ellipse(m.x + 2, m.y + 8, 6, 3, 0, 0, Math.PI * 2);
-        ctx.fill();
-
-        /* marble body */
+        ctx.beginPath(); ctx.ellipse(m.x+2, m.y+8, 6, 3, 0, 0, Math.PI*2); ctx.fill();
         ctx.fillStyle = '#5566cc';
-        ctx.beginPath(); ctx.arc(m.x + 2, m.y + 2, 6, 0, Math.PI * 2); ctx.fill();
-        /* highlight */
+        ctx.beginPath(); ctx.arc(m.x+2, m.y+2, 6, 0, Math.PI*2); ctx.fill();
         ctx.fillStyle = '#aabbff';
-        ctx.beginPath(); ctx.arc(m.x + 4, m.y, 2, 0, Math.PI * 2); ctx.fill();
-        /* inner glint */
+        ctx.beginPath(); ctx.arc(m.x+4, m.y, 2, 0, Math.PI*2); ctx.fill();
         ctx.fillStyle = '#ffffff';
-        ctx.beginPath(); ctx.arc(m.x + 5, m.y - 1, 1, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.arc(m.x+5, m.y-1, 1, 0, Math.PI*2); ctx.fill();
     });
 
     requestAnimationFrame(loop);
